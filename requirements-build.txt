@@ -1,0 +1,2 @@
+# Build-time only; the scanner itself uses nothing but the standard library.
+pyinstaller>=6.0,<7

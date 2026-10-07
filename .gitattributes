@@ -1,0 +1,6 @@
+# Keep the working tree LF everywhere: the script also runs on Linux/macOS and
+# the CI builds on Windows.
+* text=auto eol=lf
+*.exe binary
+*.png binary
+*.ico binary

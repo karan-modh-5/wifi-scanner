@@ -1,0 +1,66 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OUI_URL: https://standards-oui.ieee.org/oui/oui.csv
+
+jobs:
+  windows-exe:
+    name: Build wifi-scanner.exe
+    runs-on: windows-latest
+    permissions:
+      contents: write # required to attach the executable to a release
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install PyInstaller
+        run: python -m pip install --disable-pip-version-check -r requirements-build.txt
+
+      - name: Smoke-test the script
+        run: |
+          python -c "import wifi_scanner"
+          python wifi_scanner.py --help
+
+      - name: Bundle the IEEE OUI registry into the executable
+        continue-on-error: true # offline builds still produce a working exe
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri $env:OUI_URL -OutFile oui.csv
+          "oui.csv: $((Get-Item oui.csv).Length) bytes"
+
+      - name: Build
+        run: python build.py
+
+      - name: Smoke-test the executable
+        shell: pwsh
+        run: |
+          if (-not (Test-Path .\dist\wifi-scanner.exe)) { throw "build produced no exe" }
+          .\dist\wifi-scanner.exe --help
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: wifi-scanner-windows-x64
+          path: dist/wifi-scanner.exe
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/wifi-scanner.exe
+          generate_release_notes: true

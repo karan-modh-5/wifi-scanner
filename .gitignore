@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller output
+build/
+dist/
+
+# Scan logs and the cached IEEE OUI registry: generated locally, never tracked
+# (the registry is 3.7 MB and can be re-fetched with --update-oui)
+wifi_networks.csv
+oui.csv
+scans/
+*.part
+
+# Editors / OS
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp
