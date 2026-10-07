@@ -30,13 +30,16 @@ The platform scan itself always sweeps all channels; no public API exposes a
 channel-limited scan.
 
 Vendors: every BSSID is resolved to the registered owner of its OUI prefix
-(access point make/brand); locally administered addresses are labelled
-"Randomized MAC".  The IEEE registry is cached as oui.csv next to the script
-(next to the .exe in frozen builds, seeded from the copy bundled into the
-executable); when no cache exists yet it is downloaded once on first run
-(~4 MB, --no-oui-download skips that), --update-oui refreshes it, and
+(access point make/brand).  APs that serve several SSIDs derive extra BSSIDs
+from their base MAC (locally administered bit plus a few index bits): those
+are matched against the base BSSIDs of the same scan and labelled
+"<vendor> (virtual BSSID)" instead of "Randomized MAC", which is kept for
+addresses that match nothing.  The IEEE registry is cached as oui.csv next to
+the script (next to the .exe in frozen builds, seeded from the copy bundled
+into the executable); when no cache exists yet it is downloaded once on first
+run (~4 MB, --no-oui-download skips that), --update-oui refreshes it, and
 --oui-file points at an existing registry CSV.  Without a registry only
-randomized-MAC detection runs.
+randomized-MAC and virtual-BSSID detection run.
 """
 
 from __future__ import annotations
@@ -1043,6 +1046,10 @@ def filter_records(
 
 OUI_REGISTRY_URL = "https://standards-oui.ieee.org/oui/oui.csv"
 
+# Vendor cell values that stand for themselves rather than for an OUI owner.
+RANDOMIZED_MAC = "Randomized MAC"
+VIRTUAL_BSSID_SUFFIX = " (virtual BSSID)"
+
 
 def _parse_oui_text(text: str) -> Dict[str, str]:
     """Parse an IEEE registry CSV (Registry, Assignment, Organization Name,...)."""
@@ -1063,7 +1070,7 @@ def lookup_vendor(bssid: str, entries: Dict[str, str]) -> str:
     if len(hexmac) < 12:
         return ""
     if int(hexmac[:2], 16) & 0x02:  # locally administered bit: randomized MAC
-        return "Randomized MAC"
+        return RANDOMIZED_MAC
     for size in (9, 7, 6):  # MA-S (36-bit), MA-M (28-bit), MA-L (24-bit)
         name = entries.get(hexmac[:size])
         if name:
@@ -1071,14 +1078,89 @@ def lookup_vendor(bssid: str, entries: Dict[str, str]) -> str:
     return ""
 
 
+# An access point that serves several SSIDs usually derives the extra BSSIDs
+# from its base MAC: the locally administered bit is set and an index is added
+# to a few low bits, so a virtual BSSID keeps the OUI tail and differs from its
+# base in a handful of bits, while two unrelated 48-bit addresses differ in ~24
+# bits on average.
+_LOCALLY_ADMINISTERED_BIT = 1 << 41
+_MAX_DERIVED_BITS = 8
+
+
+def _mac48(value: str) -> Optional[int]:
+    hexmac = re.sub(r"[^0-9a-fA-F]", "", value or "")
+    if len(hexmac) != 12:
+        return None
+    return int(hexmac, 16)
+
+
+def _mac_text(value: int) -> str:
+    return ":".join(f"{value >> shift & 0xFF:02x}" for shift in range(40, -1, -8))
+
+
+def _is_locally_administered(value: int) -> bool:
+    return bool(value & _LOCALLY_ADMINISTERED_BIT)
+
+
+def resolve_virtual_vendor(
+    bssid: str, base_vendors: Sequence[Tuple[int, str]], entries: Dict[str, str]
+) -> str:
+    """Vendor for a locally administered BSSID; '' when it stays unexplained.
+
+    A locally administered address is not automatically a randomized client
+    MAC: APs derive their virtual BSSIDs from the base MAC.  Match the closest
+    globally administered BSSID of this scan first (bases that are switched off
+    or out of range are missed), then fall back to the registry with the
+    locally administered bit cleared.
+    """
+    value = _mac48(bssid)
+    if value is None:
+        return ""
+    best_distance = _MAX_DERIVED_BITS + 1
+    best_vendor = ""
+    for base_value, vendor in base_vendors:
+        if (value >> 16) & 0xFFFF != (base_value >> 16) & 0xFFFF:
+            continue  # a derived BSSID keeps the OUI tail of its base
+        distance = (value ^ base_value).bit_count()
+        if distance < best_distance:
+            best_distance, best_vendor = distance, vendor
+    if not best_vendor:
+        best_vendor = lookup_vendor(
+            _mac_text(value & ~_LOCALLY_ADMINISTERED_BIT), entries
+        )
+        if not best_vendor or best_vendor == RANDOMIZED_MAC:
+            return ""
+    return best_vendor + VIRTUAL_BSSID_SUFFIX
+
+
 def annotate_vendors(
     records: List[Dict[str, Any]], entries: Dict[str, str]
 ) -> List[Dict[str, Any]]:
+    """Set every record's `vendor`, virtual BSSIDs included.
+
+    Derived BSSIDs are matched against the base BSSIDs seen in the same scan,
+    so they are named after their real vendor instead of being written off as
+    randomized addresses.
+    """
+    raw: Dict[str, str] = {}
+    base_vendors: List[Tuple[int, str]] = []
+    for rec in records:
+        bssid = str(rec.get("bssid") or "")
+        if bssid in raw:
+            continue
+        vendor = lookup_vendor(bssid, entries)
+        raw[bssid] = vendor
+        value = _mac48(bssid)
+        if value is not None and not _is_locally_administered(value) and vendor:
+            base_vendors.append((value, vendor))
     cache: Dict[str, str] = {}
     for rec in records:
         bssid = str(rec.get("bssid") or "")
         if bssid not in cache:
-            cache[bssid] = lookup_vendor(bssid, entries)
+            vendor = raw.get(bssid, "")
+            if vendor == RANDOMIZED_MAC:
+                vendor = resolve_virtual_vendor(bssid, base_vendors, entries) or vendor
+            cache[bssid] = vendor
         rec["vendor"] = cache[bssid]
     return records
 
@@ -1473,6 +1555,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print("No wireless networks found.", file=sys.stderr)
             return 1
         scanned = len(records)
+        # Before filtering: a virtual BSSID is matched against every base
+        # BSSID the scan saw, including bases the filter would drop.
+        annotate_vendors(records, oui_entries)
         records = filter_records(records, args.ssid, channels, bands)
         if not records:
             print(
@@ -1483,7 +1568,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             return 1
         finalize(records, location)
-        annotate_vendors(records, oui_entries)
         records.sort(key=lambda r: r.get("signal_percent") or -1, reverse=True)
         created = append_csv(csv_path, records)
     except ScanError as exc:

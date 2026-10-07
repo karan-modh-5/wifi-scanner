@@ -20,6 +20,11 @@ on Windows, Linux and macOS.
 - **Vendor identification.** Every BSSID is resolved against the IEEE OUI
   registry (`oui.csv`), including MA-M/MA-S (28/36-bit) prefixes and
   "Randomized MAC" detection for locally administered addresses.
+- **Virtual BSSIDs identified.** APs that serve several SSIDs derive extra
+  BSSIDs from their base MAC (local bit plus a few index bits); those are
+  matched against the base BSSIDs of the same scan and reported as
+  `<vendor> (virtual BSSID)` instead of being written off as randomized
+  addresses.
 - **Filters.** Narrow the table and the CSV rows by SSID pattern, band or
   channel.
 
@@ -91,7 +96,9 @@ HomeNet                       aa:bb:cc:dd:ee:02  TP-Link                  54   -
 When a backend reports only one of the two signal fields, the other is
 derived: `percent = 2 * (dBm + 100)` clamped to 0–100, and
 `dBm = percent / 2 - 100`. Hidden networks are shown as `<hidden>` when the
-backend reports an empty SSID.
+backend reports an empty SSID. The `VENDOR` column is capped at 24 characters,
+so long values such as `Grandstream Networks, Inc. (virtual BSSID)` are
+truncated in the table; the CSV always holds the full value.
 
 ## CSV columns
 
@@ -102,7 +109,7 @@ backend reports an empty SSID.
 | `ssid` | Network name (empty for hidden networks). |
 | `hidden` | `1` when the SSID is not broadcast, else `0`. |
 | `bssid` | Access point MAC address. |
-| `vendor` | OUI owner (make/brand) or `Randomized MAC`. |
+| `vendor` | OUI owner (make/brand); `<vendor> (virtual BSSID)` when the address is derived from a base MAC, or `Randomized MAC` when nothing matches. |
 | `signal_percent` | Signal quality, 0–100. |
 | `signal_dbm` | Raw RSSI in dBm (Windows WLAN API and Linux). |
 | `channel` | Wi-Fi channel. |
@@ -144,6 +151,13 @@ note: OUI registry downloaded: /path/to/oui.csv
 - If the download fails the scan still runs and prints a note saying vendor
   names are unavailable.
 
+Addresses with the locally administered bit set are not automatically written
+off as randomized: when the AP that owns them is also in range (the usual case
+for an AP broadcasting several SSIDs), the derived BSSID is attributed to that
+base's vendor and marked `(virtual BSSID)`. This matching uses the scan itself,
+so it also works with `--no-oui-download` and for bases whose OUI is missing
+from the registry.
+
 The Windows release build has `oui.csv` bundled inside the executable: it is
 unpacked next to the `.exe` on first run, so release users never trigger the
 download (a read-only install directory falls back to reading the bundled
@@ -169,24 +183,35 @@ Build inputs: `wifi_scanner.spec` (PyInstaller description) and
 
 ### Releases via GitHub Actions
 
-`.github/workflows/build.yml` builds the Windows executable on every push and
-pull request, uploads it as the `wifi-scanner-windows-x64` artifact, and
-attaches it to a GitHub Release when a `v*` tag is pushed:
+`.github/workflows/build.yml` runs the unit tests, builds the Windows
+executable on every push and pull request, uploads it as the
+`wifi-scanner-windows-x64` artifact, and attaches it to a GitHub Release when a
+`v*` tag is pushed:
 
 ```
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+## Tests
+
+No Wi-Fi adapter and no registry file needed — the vendor attribution tests run
+against a small in-memory registry:
+
+```
+python -m unittest discover -s tests -v
 ```
 
 ## Project layout
 
 ```
-wifi_scanner.py       scanner: backends, parsing, filters, CSV and table output
-build.py              builds the standalone executable
-wifi_scanner.spec     PyInstaller build description
-version_info.txt      Windows version resource for the executable
-requirements-build.txt build-time dependency (PyInstaller)
-.github/workflows/    CI: build + release the Windows executable
+wifi_scanner.py         scanner: backends, parsing, filters, CSV and table output
+build.py                builds the standalone executable
+wifi_scanner.spec       PyInstaller build description
+version_info.txt        Windows version resource for the executable
+requirements-build.txt  build-time dependency (PyInstaller)
+tests/test_vendors.py   vendor/virtual-BSSID attribution tests
+.github/workflows/      CI: tests + build + release the Windows executable
 ```
 
 ## License

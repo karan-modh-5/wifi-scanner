@@ -34,6 +34,9 @@ jobs:
           python -c "import wifi_scanner"
           python wifi_scanner.py --help
 
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
       - name: Bundle the IEEE OUI registry into the executable
         continue-on-error: true # offline builds still produce a working exe
         shell: pwsh

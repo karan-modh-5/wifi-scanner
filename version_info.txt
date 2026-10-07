@@ -2,8 +2,8 @@
 # Windows version resource compiled into the executable (see wifi_scanner.spec).
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 0, 0),
-    prodvers=(1, 0, 0, 0),
+    filevers=(1, 0, 1, 0),
+    prodvers=(1, 0, 1, 0),
     mask=0x3F,
     flags=0x0,
     OS=0x40004,
@@ -18,7 +18,7 @@ VSVersionInfo(
           '040904B0',
           [
             StringStruct('FileDescription', 'Wi-Fi scanner: scan, print and log nearby networks'),
-            StringStruct('FileVersion', '1.0.0.0'),
+            StringStruct('FileVersion', '1.0.1.0'),
             StringStruct('InternalName', 'wifi-scanner'),
             StringStruct('LegalCopyright', 'MIT License'),
             StringStruct('OriginalFilename', 'wifi-scanner.exe'),
