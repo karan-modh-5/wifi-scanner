@@ -51,6 +51,9 @@ python wifi_scanner.py -s "Home*" -s Office # SSID filter, repeatable
 python wifi_scanner.py --update-oui         # refresh the IEEE OUI registry
 ```
 
+The first run without a cached `oui.csv` downloads the IEEE registry once
+(see [OUI vendor data](#oui-vendor-data)); add `--no-oui-download` to skip it.
+
 `-s/--ssid`, `-b/--band` and `-c/--channel` combine with AND and apply to both
 the printed table and the appended CSV rows; the platform scan itself always
 sweeps all channels, since no public API exposes a channel-limited scan.
@@ -69,8 +72,9 @@ same from `cmd.exe`, PowerShell and POSIX shells.
 | `-c`, `--channel LIST` | Keep networks on these channels, e.g. `6`, `1,6,11`, `1-14` (repeatable). |
 | `--no-rescan` | Use cached results instead of triggering a fresh scan (Windows WLAN API and Linux/nmcli). |
 | `--oui-file PATH` | Use a specific IEEE OUI registry CSV. |
-| `--oui-url URL` | Registry URL used by `--update-oui` (default: the IEEE registry). |
+| `--oui-url URL` | Registry URL used for the first-run download and `--update-oui` (default: the IEEE registry). |
 | `--update-oui` | Download the full IEEE OUI registry to `oui.csv`. |
+| `--no-oui-download` | Never download the registry (offline machines; vendor names stay empty). |
 
 Exit codes: `0` success, `1` no networks found / nothing matched the filter,
 `2` no location provided, `3` scan error.
@@ -124,17 +128,27 @@ backend reports an empty SSID.
 
 Vendor names come from the IEEE registry CSV (`Registry, Assignment,
 Organization Name, ...`), cached as `oui.csv` next to the script (next to the
-`.exe` in frozen builds). Refresh it with:
+`.exe` in frozen builds). The scanner fetches it automatically the first time
+it runs without a cache (~4 MB, one request to the IEEE registry URL), and
+prints which file it wrote:
 
 ```
-wifi-scanner.exe --location anywhere --update-oui
+note: OUI registry downloaded: /path/to/oui.csv
 ```
 
-Installing the registry is optional: without it the scanner still labels
-randomized MACs and leaves `vendor` empty. When the executable was built with
-`oui.csv` present, the registry ships inside the binary and is unpacked next
-to the `.exe` on first run — a read-only install directory falls back to the
-bundled copy.
+- `--no-oui-download` skips that fetch for offline machines: `vendor` stays
+  empty for normal OUIs, randomized addresses are still labelled.
+- `--update-oui` re-downloads the registry on demand (annual refresh).
+- `--oui-url URL` points the download at a mirror.
+- `--oui-file PATH` uses an existing registry CSV instead of the cache.
+- If the download fails the scan still runs and prints a note saying vendor
+  names are unavailable.
+
+The Windows release build has `oui.csv` bundled inside the executable: it is
+unpacked next to the `.exe` on first run, so release users never trigger the
+download (a read-only install directory falls back to reading the bundled
+copy). `oui.csv` is deliberately not committed to this repository — it is
+regenerated from the upstream URL.
 
 This tool is for auditing your own networks and for passive site surveys;
 use it only where you are authorized to do so.

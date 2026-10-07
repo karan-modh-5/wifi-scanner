@@ -21,6 +21,7 @@ Usage
   python wifi_scanner.py -b 5                   # band filter: 2.4 / 5 / 6
   python wifi_scanner.py -s "Home*" -s Office   # SSID filter (alias --ssid)
   python wifi_scanner.py --update-oui           # fetch the full IEEE OUI registry
+  python wifi_scanner.py --no-oui-download      # never fetch it (offline use)
 
 -s/--ssid, -b/--band and -c/--channel restrict which results are kept (and
 written to CSV); they combine with AND.  Filter values tolerate surrounding
@@ -32,8 +33,10 @@ Vendors: every BSSID is resolved to the registered owner of its OUI prefix
 (access point make/brand); locally administered addresses are labelled
 "Randomized MAC".  The IEEE registry is cached as oui.csv next to the script
 (next to the .exe in frozen builds, seeded from the copy bundled into the
-executable); fetch or refresh it with --update-oui, or point --oui-file at an
-existing registry CSV.  Without a registry only randomized-MAC detection runs.
+executable); when no cache exists yet it is downloaded once on first run
+(~4 MB, --no-oui-download skips that), --update-oui refreshes it, and
+--oui-file points at an existing registry CSV.  Without a registry only
+randomized-MAC detection runs.
 """
 
 from __future__ import annotations
@@ -1140,11 +1143,17 @@ def _download_oui(url: str, destination: Path) -> None:
 
 
 def load_oui_database(
-    path_override: Optional[str], url: str, update: bool
+    path_override: Optional[str],
+    url: str,
+    update: bool,
+    fetch_missing: bool = True,
 ) -> Tuple[Dict[str, str], Optional[str]]:
     """Return (entries, note): --oui-file, else the oui.csv cache next to the
-    script (or executable), else the built-in subset.  --update-oui
-    re-downloads first."""
+    script (or executable), else the bundled copy inside the executable.
+
+    When no registry is cached yet (fresh clone, first run of the executable)
+    the IEEE registry is downloaded once, unless fetch_missing is False or
+    --oui-file was given; --update-oui always re-downloads."""
     cache = (
         Path(path_override).expanduser()
         if path_override
@@ -1157,11 +1166,19 @@ def load_oui_database(
         _download_oui(url, cache)
         note = f"OUI registry updated: {cache}"
     elif not (cache.exists() and cache.stat().st_size):
-        return {}, (
-            "vendors unavailable: no OUI registry cached "
-            "(run --update-oui to fetch the IEEE registry); "
-            "randomized MACs are still labelled"
-        )
+        if path_override or not fetch_missing:
+            return {}, (
+                "vendors unavailable: no OUI registry cached "
+                "(run --update-oui to fetch the IEEE registry); "
+                "randomized MACs are still labelled"
+            )
+        try:
+            _download_oui(url, cache)
+        except ScanError as exc:
+            return {}, (
+                f"vendors unavailable: {exc}; randomized MACs are still labelled"
+            )
+        note = f"OUI registry downloaded: {cache}"
     try:
         text = cache.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
@@ -1388,6 +1405,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "script/executable",
     )
     parser.add_argument(
+        "--no-oui-download",
+        action="store_true",
+        help="do not download the IEEE OUI registry when none is cached yet "
+        "(offline machines; vendor names stay empty)",
+    )
+    parser.add_argument(
         "-s",
         "--ssid",
         action="append",
@@ -1436,7 +1459,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if migration:
             print(f"note: {migration}", file=sys.stderr)
         oui_entries, oui_note = load_oui_database(
-            args.oui_file, args.oui_url, args.update_oui
+            args.oui_file,
+            args.oui_url,
+            args.update_oui,
+            fetch_missing=not args.no_oui_download,
         )
         if oui_note:
             print(f"note: {oui_note}", file=sys.stderr)
