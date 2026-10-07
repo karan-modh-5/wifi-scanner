@@ -186,7 +186,9 @@ Build inputs: `wifi_scanner.spec` (PyInstaller description) and
 `.github/workflows/build.yml` runs the unit tests, builds the Windows
 executable on every push and pull request, uploads it as the
 `wifi-scanner-windows-x64` artifact, and attaches it to a GitHub Release when a
-`v*` tag is pushed:
+`v*` tag is pushed. Release builds fail rather than publish an executable that
+is missing the bundled OUI registry (the registry download is retried, and a
+branch build only warns, since that executable downloads it on first run):
 
 ```
 git tag v1.0.1

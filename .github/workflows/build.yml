@@ -37,12 +37,12 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests -v
 
-      - name: Bundle the IEEE OUI registry into the executable
-        continue-on-error: true # offline builds still produce a working exe
+      - name: Fetch the IEEE OUI registry for bundling
+        continue-on-error: true # branch builds still produce a working exe
         shell: pwsh
         run: |
-          $ProgressPreference = 'SilentlyContinue'
-          Invoke-WebRequest -Uri $env:OUI_URL -OutFile oui.csv
+          curl.exe -fsSL --retry 5 --retry-all-errors --retry-delay 5 `
+            --max-time 300 -A "wifi-scanner/1.0" -o oui.csv "$env:OUI_URL"
           "oui.csv: $((Get-Item oui.csv).Length) bytes"
 
       - name: Build
@@ -53,6 +53,18 @@ jobs:
         run: |
           if (-not (Test-Path .\dist\wifi-scanner.exe)) { throw "build produced no exe" }
           .\dist\wifi-scanner.exe --help
+
+      - name: Check the OUI registry is bundled
+        shell: pwsh
+        run: |
+          $bundled = python -c "from PyInstaller.archive.readers import CArchiveReader; print('yes' if 'oui.csv' in CArchiveReader(r'dist/wifi-scanner.exe').toc else 'no')"
+          if ($bundled -eq 'yes') {
+            Write-Host "dist/wifi-scanner.exe bundles the OUI registry"
+          } elseif ($env:GITHUB_REF -like 'refs/tags/v*') {
+            throw "release build produced an executable without the bundled OUI registry"
+          } else {
+            Write-Host "::warning title=OUI registry not bundled::the executable will download the registry on first run instead"
+          }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
